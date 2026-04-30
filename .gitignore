@@ -3,6 +3,7 @@ output/
 playwright/.cache/
 .env
 .venv/
+Resources/
 __pycache__/
 *.log
 *.pyc
