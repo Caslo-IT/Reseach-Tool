@@ -3,6 +3,7 @@
 This project generates:
 
 - A Sinhala research PDF for a statue, deity, or sacred figure
+- A Sinhala research Word file (`.docx`) for the same subject
 - A `sketch_prompts.json` file with 30 image-generation sketch prompts
 
 It supports both:
@@ -75,6 +76,7 @@ The interface will show:
 - Processing log
 - Output file names
 - Generated PDF file
+- Generated Word file
 - Generated JSON file
 
 ## Run from Command Line
@@ -98,6 +100,7 @@ Resources/report_YYYYMMDD_HHMMSS/
 Each run creates:
 
 - `research_report.pdf`
+- `research_report.docx`
 - `sketch_prompts.json`
 
 ## Project Files

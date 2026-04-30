@@ -165,9 +165,13 @@ def run_generation(subject, progress=gr.Progress(track_tqdm=False)):
         "",
         None,
         None,
+        None,
     )
 
-    result = generate_report_assets(subject, progress_callback=progress_callback)
+    try:
+        result = generate_report_assets(subject, progress_callback=progress_callback)
+    except Exception as exc:
+        raise gr.Error(str(exc)) from exc
 
     json_preview = json.dumps(result["sketch_prompts"], ensure_ascii=False, indent=2)
 
@@ -178,18 +182,19 @@ def run_generation(subject, progress=gr.Progress(track_tqdm=False)):
         result["report_text"],
         json_preview,
         result["pdf_path"],
+        result["docx_path"],
         result["json_path"],
     )
 
 
-with gr.Blocks(title="Sacred Art Research Generator", css=APP_CSS, theme=gr.themes.Soft()) as demo:
+with gr.Blocks(title="Sacred Art Research Generator") as demo:
     gr.HTML(
         """
         <section id="hero">
             <h1>Sacred Art Research Generator</h1>
             <p>
                 Generate a Sinhala research report, track token and request usage, measure generation time,
-                and download both the PDF and sketch-prompt JSON from one workspace.
+                and download the PDF, Word file, and sketch-prompt JSON from one workspace.
             </p>
         </section>
         """
@@ -211,6 +216,7 @@ with gr.Blocks(title="Sacred Art Research Generator", css=APP_CSS, theme=gr.them
 
     with gr.Row():
         pdf_output = gr.File(label="Research PDF")
+        docx_output = gr.File(label="Research Word File")
         json_output = gr.File(label="Sketch Prompt JSON")
 
     with gr.Tabs():
@@ -235,10 +241,11 @@ with gr.Blocks(title="Sacred Art Research Generator", css=APP_CSS, theme=gr.them
             report_preview,
             json_preview,
             pdf_output,
+            docx_output,
             json_output,
         ],
     )
 
 
 if __name__ == "__main__":
-    demo.queue().launch()
+    demo.queue().launch(theme=gr.themes.Soft(), css=APP_CSS)

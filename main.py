@@ -6,6 +6,12 @@ from datetime import datetime
 from xml.sax.saxutils import escape
 
 from google import genai
+from google.genai import errors as genai_errors
+from docx import Document
+from docx.enum.section import WD_SECTION
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import Mm, Pt
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -37,6 +43,7 @@ def load_dotenv():
 load_dotenv()
 
 MODEL_NAME = "gemma-4-31b-it"
+MAX_GEMINI_RETRIES = 3
 
 prompt_template = """You are an expert researcher in Sri Lankan sacred art, Hindu-Buddhist iconography, temple sculpture traditions, and statue design interpretation.
 
@@ -185,6 +192,44 @@ def build_client():
     if not api_key:
         raise ValueError("GEMINI_API_KEY is not set. Add it to .env or your environment.")
     return genai.Client(api_key=api_key)
+
+
+def _should_retry_gemini_error(error):
+    status_code = getattr(error, "status_code", None)
+    if isinstance(error, genai_errors.ServerError):
+        return True
+    return isinstance(status_code, int) and status_code >= 500
+
+
+def generate_content_with_retry(client, prompt, *, progress_callback=None, stage_label="Generating content"):
+    last_error = None
+
+    for attempt in range(1, MAX_GEMINI_RETRIES + 1):
+        try:
+            return client.models.generate_content(
+                model=MODEL_NAME,
+                contents=prompt,
+            )
+        except genai_errors.APIError as error:
+            last_error = error
+            if not _should_retry_gemini_error(error) or attempt == MAX_GEMINI_RETRIES:
+                break
+
+            wait_seconds = attempt * 2
+            if progress_callback:
+                progress_callback(
+                    min(0.95, 0.12 + (attempt * 0.02)),
+                    f"{stage_label} failed temporarily. Retrying in {wait_seconds} seconds (attempt {attempt + 1}/{MAX_GEMINI_RETRIES})",
+                )
+            time.sleep(wait_seconds)
+
+    if last_error:
+        raise RuntimeError(
+            "Gemini is temporarily unavailable and the research could not be generated right now. "
+            "Please try again in a moment."
+        ) from last_error
+
+    raise RuntimeError("Gemini generation failed before a response was returned.")
 
 
 def _read_usage_value(usage, *keys):
@@ -360,6 +405,128 @@ def register_fonts():
     pdfmetrics.registerFont(TTFont(SINHALA_FONT_NAME, font_path))
 
 
+def set_run_font(run, font_name, font_size=None, bold=False):
+    run.bold = bold
+    run.font.name = font_name
+    if font_size is not None:
+        run.font.size = font_size
+
+    r_pr = run._element.get_or_add_rPr()
+    r_fonts = r_pr.rFonts
+    if r_fonts is None:
+        r_fonts = OxmlElement("w:rFonts")
+        r_pr.append(r_fonts)
+
+    for key in ("w:ascii", "w:hAnsi", "w:eastAsia", "w:cs"):
+        r_fonts.set(qn(key), font_name)
+
+
+def add_docx_text(paragraph, text, font_name, font_size=None, bold=False):
+    run = paragraph.add_run(text)
+    set_run_font(run, font_name, font_size=font_size, bold=bold)
+    return run
+
+
+def style_docx_table(table):
+    table.style = "Table Grid"
+    for row_index, row in enumerate(table.rows):
+        for cell in row.cells:
+            for paragraph in cell.paragraphs:
+                for run in paragraph.runs:
+                    set_run_font(run, "Nirmala UI", font_size=Pt(10.5), bold=(row_index == 0))
+
+
+def build_docx(markdown_text, output_path):
+    document = Document()
+    section = document.sections[0]
+    section.start_type = WD_SECTION.NEW_PAGE
+    section.page_width = Mm(210)
+    section.page_height = Mm(297)
+    section.top_margin = Mm(18)
+    section.bottom_margin = Mm(18)
+    section.left_margin = Mm(16)
+    section.right_margin = Mm(16)
+
+    lines = markdown_text.splitlines()
+    i = 0
+
+    while i < len(lines):
+        line = lines[i].rstrip()
+        stripped = line.strip()
+
+        if not stripped:
+            document.add_paragraph()
+            i += 1
+            continue
+
+        if stripped.startswith("|") and stripped.endswith("|"):
+            table_lines = []
+            while i < len(lines):
+                candidate = lines[i].strip()
+                if candidate.startswith("|") and candidate.endswith("|"):
+                    table_lines.append(lines[i])
+                    i += 1
+                else:
+                    break
+
+            rows = []
+            for table_line in table_lines:
+                cells = parse_table_row(table_line)
+                if cells is not None:
+                    rows.append(cells)
+
+            if len(rows) > 1 and is_separator_row(rows[1]):
+                rows.pop(1)
+
+            if rows:
+                max_cols = max(len(row) for row in rows)
+                table = document.add_table(rows=len(rows), cols=max_cols)
+                for row_index, row in enumerate(rows):
+                    for col_index in range(max_cols):
+                        cell = table.cell(row_index, col_index)
+                        cell.text = ""
+                        paragraph = cell.paragraphs[0]
+                        add_docx_text(
+                            paragraph,
+                            row[col_index] if col_index < len(row) else "",
+                            "Nirmala UI",
+                            font_size=Pt(10.5),
+                            bold=(row_index == 0),
+                        )
+                style_docx_table(table)
+            continue
+
+        if stripped.startswith("# "):
+            paragraph = document.add_paragraph()
+            add_docx_text(paragraph, stripped[2:].strip(), "Nirmala UI", font_size=Pt(18), bold=True)
+            i += 1
+            continue
+
+        if stripped.startswith("## "):
+            paragraph = document.add_paragraph()
+            add_docx_text(paragraph, stripped[3:].strip(), "Nirmala UI", font_size=Pt(14), bold=True)
+            i += 1
+            continue
+
+        if stripped.startswith("### "):
+            paragraph = document.add_paragraph()
+            add_docx_text(paragraph, stripped[4:].strip(), "Nirmala UI", font_size=Pt(12), bold=True)
+            i += 1
+            continue
+
+        if stripped.startswith("- "):
+            paragraph = document.add_paragraph(style="List Bullet")
+            add_docx_text(paragraph, stripped[2:].strip(), "Nirmala UI", font_size=Pt(10.5))
+            i += 1
+            continue
+
+        paragraph = document.add_paragraph()
+        add_docx_text(paragraph, stripped, "Nirmala UI", font_size=Pt(10.5))
+        i += 1
+
+    document.save(output_path)
+
+
 def build_styles():
     base = getSampleStyleSheet()
     return {
@@ -424,6 +591,7 @@ def build_output_paths():
     return {
         "report_dir": report_dir,
         "pdf_path": os.path.join(report_dir, "research_report.pdf"),
+        "docx_path": os.path.join(report_dir, "research_report.docx"),
         "json_path": os.path.join(report_dir, "sketch_prompts.json"),
     }
 
@@ -460,9 +628,10 @@ def validate_sketch_prompts(items):
 
 
 def generate_sketch_prompts(client, research_text):
-    response = client.models.generate_content(
-        model=MODEL_NAME,
-        contents=sketch_prompt_template.format(research_text=research_text),
+    response = generate_content_with_retry(
+        client,
+        sketch_prompt_template.format(research_text=research_text),
+        stage_label="Generating sketch prompts",
     )
     raw_text = response.text or "[]"
     items = extract_json_array(raw_text)
@@ -485,9 +654,11 @@ def generate_report_assets(user_description, progress_callback=None):
 
     update_progress(0.15, "Generating research report content")
     prompt = prompt_template.format(user_description=user_description.strip())
-    response = client.models.generate_content(
-        model=MODEL_NAME,
-        contents=prompt,
+    response = generate_content_with_retry(
+        client,
+        prompt,
+        progress_callback=update_progress,
+        stage_label="Generating research report",
     )
     text = response.text or "No response text was returned."
     report_usage = extract_usage_metrics(response)
@@ -500,7 +671,7 @@ def generate_report_assets(user_description, progress_callback=None):
     update_progress(0.6, "Generating sketch prompt JSON")
     sketch_prompts, sketch_usage = generate_sketch_prompts(client, text)
 
-    update_progress(0.8, "Building research PDF")
+    update_progress(0.78, "Building research PDF")
     doc = SimpleDocTemplate(
         output_paths["pdf_path"],
         pagesize=A4,
@@ -512,7 +683,10 @@ def generate_report_assets(user_description, progress_callback=None):
     story = build_story(text, styles)
     doc.build(story)
 
-    update_progress(0.92, "Saving sketch prompt JSON")
+    update_progress(0.88, "Building research Word document")
+    build_docx(text, output_paths["docx_path"])
+
+    update_progress(0.94, "Saving sketch prompt JSON")
     with open(output_paths["json_path"], "w", encoding="utf-8") as json_file:
         json.dump(sketch_prompts, json_file, ensure_ascii=False, indent=2)
 
@@ -536,6 +710,7 @@ def main():
     result = generate_report_assets(user_description)
 
     print(f"PDF Generated: {result['pdf_path']}")
+    print(f"Word Generated: {result['docx_path']}")
     print(f"JSON Generated: {result['json_path']}")
 
 
