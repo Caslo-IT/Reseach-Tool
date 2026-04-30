@@ -9,6 +9,7 @@ This project generates:
 It supports both:
 
 - A Gradio web interface
+- A plain HTML web interface
 - A command-line run with `main.py`
 
 ## Requirements
@@ -79,6 +80,50 @@ The interface will show:
 - Generated Word file
 - Generated JSON file
 
+## Run the HTML Interface
+
+Start the HTML app with:
+
+```bash
+python3 html_app.py
+```
+
+Or with the Makefile target:
+
+```bash
+make run-html
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8000
+```
+
+How it works:
+
+1. Open the page in your browser
+2. Enter the statue, deity, or sacred-figure research subject
+3. Submit the form to start a background generation job
+4. Watch the live progress area update until the job is complete
+5. Preview the generated report and sketch prompt JSON in the browser
+6. Download the PDF, Word, and JSON output files
+
+The HTML interface provides:
+
+- A normal browser form for the research subject
+- Background job execution so the page can keep updating while generation runs
+- Live status updates and processing logs
+- Metrics for requests, token usage, and generation time
+- In-browser previews for the report and sketch prompt JSON
+- Direct download links for the generated PDF, Word file, and JSON file
+
+Technical notes for `html_app.py`:
+
+- The app runs on `127.0.0.1:8000` by default
+- It uses Python's built-in WSGI server via `wsgiref.simple_server`
+- Generated files are stored in the project `Resources/` directory and are served back through download routes after the job finishes
+
 ## Run from Command Line
 
 You can also run the original command-line version:
@@ -106,6 +151,7 @@ Each run creates:
 ## Project Files
 
 - `gradio_app.py` - Gradio user interface
+- `html_app.py` - Plain HTML/CSS/JS web interface
 - `main.py` - Core report and JSON generation pipeline
 - `generate_sketch_prompts.py` - Standalone sketch prompt generator
 - `requirements.txt` - Python dependencies
