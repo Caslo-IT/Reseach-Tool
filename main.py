@@ -42,7 +42,7 @@ def load_dotenv():
 
 load_dotenv()
 
-MODEL_NAME = "gemma-4-31b-it"
+MODEL_NAME = "gemini-2.5-flash"
 MAX_GEMINI_RETRIES = 3
 
 prompt_template = """You are an expert researcher in Sri Lankan sacred art, Hindu-Buddhist iconography, temple sculpture traditions, and statue design interpretation.
